@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Collaborative Room</title>
     
-    <!-- 1. Import Map: Tells browser where to find React, Firebase, and Icons -->
+    <!-- 1. Import Map -->
     <script type="importmap">
     {
       "imports": {
@@ -19,34 +19,42 @@
     }
     </script>
 
-    <!-- 2. Tailwind CSS for styling -->
+    <!-- 2. Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- 3. Babel Standalone for compiling JSX in browser -->
+    <!-- 3. Babel Standalone -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <style>
-        body { margin: 0; overflow: hidden; background-color: #f8fafc; }
+        body { margin: 0; overflow: hidden; background-color: #f8fafc; font-family: sans-serif; }
         .cursor-crosshair { cursor: crosshair; }
         .cursor-grab { cursor: grab; }
         .cursor-not-allowed { cursor: not-allowed; }
         .cursor-move { cursor: move; }
-        /* Animation Classes */
-        @keyframes fade-in-up {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fade-in-down {
-          from { opacity: 0; transform: translateY(-20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fade-in-up { animation: fade-in-up 0.4s ease-out; }
-        .animate-fade-in-down { animation: fade-in-down 0.4s ease-out; }
+        #error-overlay { display: none; position: fixed; inset: 0; background: white; z-index: 9999; padding: 2rem; color: #ef4444; }
     </style>
 </head>
 <body>
 
 <div id="root"></div>
+<div id="error-overlay"></div>
+
+<!-- GLOBAL ERROR HANDLER (Catches syntax errors in your config) -->
+<script>
+    window.onerror = function(message, source, lineno, colno, error) {
+        const overlay = document.getElementById('error-overlay');
+        overlay.style.display = 'block';
+        overlay.innerHTML = `
+            <h1 style="font-size: 1.5rem; font-weight: bold; margin-bottom: 1rem;">Startup Error</h1>
+            <p style="margin-bottom: 0.5rem;">The app crashed before it could start. This is usually a syntax error in the configuration.</p>
+            <div style="background: #fef2f2; border: 1px solid #fee2e2; padding: 1rem; border-radius: 0.5rem; font-family: monospace;">
+                <strong>Error:</strong> ${message}<br>
+                <strong>Line:</strong> ${lineno}
+            </div>
+            <p style="margin-top: 1rem; color: #666;">Check the 'fallbackConfig' section in your code. Make sure all commas and quotes are correct.</p>
+        `;
+    };
+</script>
 
 <!-- 4. The Application Logic -->
 <script type="text/babel" data-type="module">
@@ -55,7 +63,7 @@ import { createRoot } from 'react-dom/client';
 import { 
   Pencil, Type, Image as ImageIcon, Eraser, Hand, Undo, Redo, 
   Music, ZoomIn, ZoomOut, Move, Trash2, Smile, Video, Upload, 
-  Link as LinkIcon, X, RefreshCw, Share2, Plus, LogIn, Check, AlertCircle
+  Link as LinkIcon, X, RefreshCw, Share2, Plus, LogIn, Check, AlertCircle, WifiOff
 } from 'lucide-react';
 import { initializeApp } from "firebase/app";
 import { 
@@ -66,17 +74,19 @@ import {
 } from "firebase/auth";
 
 /**
- * CONFIGURATION
- * * IMPORTANT: If running on GitHub Pages or locally, you MUST replace the 
- * "YOUR_API_KEY" values below with your real Firebase Project keys.
+ * ------------------------------------------------------------------
+ * CONFIGURATION: PASTE YOUR KEYS HERE
+ * ------------------------------------------------------------------
+ * WARNING: Ensure you keep the quotes "" and the commas , at the end.
  */
-const firebaseConfig = {
+const fallbackConfig = {
   apiKey: "AIzaSyA-23TkBPSB2W9hw92KoP6iud2WabrA1uc",
   authDomain: "colabboard-93cb3.firebaseapp.com",
   projectId: "colabboard-93cb3",
   storageBucket: "colabboard-93cb3.firebasestorage.app",
   messagingSenderId: "811515955849",
   appId: "1:811515955849:web:825d01be1df421b03e1458"
+};
 };
 
 // This checks if we are in the Preview environment (where keys are injected)
@@ -107,40 +117,26 @@ const getCoordinates = (event, offset, scale) => {
   };
 };
 
-// --- FIXED URL PARSER ---
 const getEmbedUrl = (url) => {
     if (!url) return null;
-    
-    // 1. Auto-add protocol if missing
-    if (!url.match(/^https?:\/\//)) {
-        url = 'https://' + url;
-    }
+    if (!url.match(/^https?:\/\//)) url = 'https://' + url;
 
-    // 2. YouTube (Now supports 'shorts/')
-    // Matches: youtube.com/watch?v=ID, youtu.be/ID, youtube.com/shorts/ID
+    // YouTube
     const ytRegExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|shorts\/)([^#&?]*).*/;
     const ytMatch = url.match(ytRegExp);
     if (ytMatch && ytMatch[2].length === 11) {
         return `https://www.youtube.com/embed/${ytMatch[2]}?autoplay=1&enablejsapi=1`;
     }
 
-    // 3. Spotify (Robust Path Handling)
+    // Spotify
     if (url.includes('spotify.com')) {
         try {
             const urlObj = new URL(url);
             let path = urlObj.pathname;
-            // Remove leading slash if present
             if (path.startsWith('/')) path = path.substring(1);
-            
-            // If it's already an embed link, return as is
             if (path.startsWith('embed')) return urlObj.href;
-            
-            // Otherwise construct embed link from path (handles track/ID, playlist/ID, user/ID/playlist/ID)
             return `https://open.spotify.com/embed/${path}`;
-        } catch (e) { 
-            console.error("Spotify Parse Error", e);
-            return null; 
-        }
+        } catch (e) { return null; }
     }
     return null;
 };
@@ -339,8 +335,15 @@ function LandingPage({ onJoin, user, configError }) {
                 <p className="text-slate-600 mb-6">
                     This app requires a Firebase connection to work. 
                     Please open the <code className="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">index.html</code> file 
-                    and replace <code className="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono text-blue-600">YOUR_API_KEY</code> with your real Firebase keys.
+                    and replace the placeholders in <code className="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono text-blue-600">fallbackConfig</code> with your real Firebase keys.
                 </p>
+                <div className="text-left bg-slate-100 p-4 rounded-lg text-xs font-mono text-slate-600 overflow-x-auto">
+                    <pre>const fallbackConfig = {`{
+  apiKey: "PASTE_HERE",
+  authDomain: "PASTE_HERE",
+  ...
+}`}</pre>
+                </div>
             </div>
         </div>
       );
@@ -757,7 +760,7 @@ function App() {
 
   useEffect(() => {
     // Safety Check: Are we using placeholders?
-    if (firebaseConfig.apiKey === "YOUR_API_KEY") {
+    if (firebaseConfig.apiKey === "PASTE_API_KEY_HERE" || firebaseConfig.apiKey === "YOUR_API_KEY") {
         setConfigError(true);
         return;
     }
