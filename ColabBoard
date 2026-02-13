@@ -1,0 +1,847 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { 
+  Pencil, 
+  Type, 
+  Image as ImageIcon, 
+  Eraser, 
+  Hand, 
+  Undo, 
+  Redo, 
+  Music, 
+  ZoomIn, 
+  ZoomOut, 
+  Move, 
+  Trash2,
+  Smile,
+  Video,
+  Upload,
+  Link as LinkIcon,
+  X,
+  RefreshCw,
+  Share2,
+  Plus,
+  LogIn,
+  Check
+} from 'lucide-react';
+import { initializeApp } from "firebase/app";
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  onSnapshot, 
+  updateDoc,
+  serverTimestamp
+} from "firebase/firestore";
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged,
+  signInWithCustomToken
+} from "firebase/auth";
+
+/**
+ * ------------------------------------------------------------------
+ * CONFIGURATION
+ * ------------------------------------------------------------------
+ * For Local/GitHub use: Replace the 'fallbackConfig' object below 
+ * with your own Firebase project configuration keys.
+ */
+const fallbackConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "your-project.firebaseapp.com",
+  projectId: "your-project-id",
+  storageBucket: "your-project.appspot.com",
+  messagingSenderId: "00000000000",
+  appId: "1:00000000000:web:00000000000000"
+};
+
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+  ? JSON.parse(__firebase_config) 
+  : fallbackConfig;
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// Use a specific App ID for isolation if provided, otherwise default
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+/**
+ * UTILITIES
+ */
+const generateId = () => Math.random().toString(36).substr(2, 9);
+
+const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+
+const getCoordinates = (event, offset, scale) => {
+  const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+  const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+  return {
+    x: (clientX - offset.x) / scale,
+    y: (clientY - offset.y) / scale,
+  };
+};
+
+const getEmbedUrl = (url) => {
+    if (!url) return null;
+    // YouTube
+    const ytRegExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const ytMatch = url.match(ytRegExp);
+    if (ytMatch && ytMatch[2].length === 11) {
+        return `https://www.youtube.com/embed/${ytMatch[2]}?autoplay=1&enablejsapi=1`;
+    }
+    // Spotify
+    if (url.includes('spotify.com')) {
+        try {
+            const urlObj = new URL(url);
+            const pathParts = urlObj.pathname.split('/').filter(Boolean);
+            if (pathParts.length >= 2) {
+                 return `https://open.spotify.com/embed/${pathParts[0]}/${pathParts[1]}`;
+            }
+        } catch (e) { return null; }
+    }
+    return null;
+};
+
+// Hit testing
+const isHit = (element, x, y, threshold = 10) => {
+    if (!element) return false;
+    if (element.type === 'pencil') {
+        if (!element.points) return false;
+        return element.points.some(p => p && Math.hypot(p.x - x, p.y - y) < threshold);
+    } 
+    let width = element.width || 0;
+    let height = element.height || 0;
+    if (element.type === 'text') {
+        width = element.text ? element.text.length * (element.fontSize * 0.6) : 100;
+        height = element.fontSize * 1.5;
+    }
+    if (element.type === 'emoji') {
+        width = element.fontSize;
+        height = element.fontSize;
+    }
+    return x >= element.x && x <= element.x + width && y >= element.y && y <= element.y + height;
+};
+
+const sanitizeElements = (elements) => {
+    if (!Array.isArray(elements)) return [];
+    return elements.filter(el => el && el.id && el.type).map(el => {
+        const safeEl = {
+            ...el,
+            x: Number.isFinite(el.x) ? el.x : 0,
+            y: Number.isFinite(el.y) ? el.y : 0,
+            width: Number.isFinite(el.width) ? el.width : 0,
+            height: Number.isFinite(el.height) ? el.height : 0,
+            color: el.color || '#000000',
+        };
+        if (el.type === 'pencil') {
+            safeEl.points = Array.isArray(el.points) 
+                ? el.points.filter(p => p && Number.isFinite(p.x) && Number.isFinite(p.y))
+                : [];
+        } else if (el.type === 'text') {
+            safeEl.text = el.text || '';
+            safeEl.fontSize = Number.isFinite(el.fontSize) ? el.fontSize : 24;
+        }
+        return safeEl;
+    });
+};
+
+/**
+ * SUB-COMPONENTS
+ */
+const ToolButton = ({ icon: Icon, active, onClick, label }) => (
+  <button
+    onClick={onClick}
+    title={label}
+    className={`p-3 rounded-xl transition-all duration-200 flex items-center justify-center group relative ${
+      active 
+        ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' 
+        : 'bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-900 border border-slate-200'
+    }`}
+  >
+    <Icon size={20} />
+    <span className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+      {label}
+    </span>
+  </button>
+);
+
+const ColorPicker = ({ color, onChange }) => {
+  const colors = ['#000000', '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#6366F1', '#8B5CF6', '#EC4899'];
+  return (
+    <div className="flex gap-2 p-2 bg-white rounded-xl border border-slate-200 shadow-sm">
+      {colors.map((c) => (
+        <button
+          key={c}
+          onClick={() => onChange(c)}
+          className={`w-6 h-6 rounded-full transition-transform hover:scale-110 ${color === c ? 'ring-2 ring-offset-2 ring-slate-400' : ''}`}
+          style={{ backgroundColor: c }}
+        />
+      ))}
+    </div>
+  );
+};
+
+const ImageModal = ({ isOpen, onClose, onUrlSubmit, onFileSubmit }) => {
+    const [tab, setTab] = useState('url');
+    const [url, setUrl] = useState('');
+    const fileInputRef = useRef(null);
+  
+    if (!isOpen) return null;
+  
+    const handleFileChange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                onFileSubmit(reader.result);
+                onClose();
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+  
+    return (
+      <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in-up">
+          <div className="flex border-b border-slate-100">
+            <button onClick={() => setTab('url')} className={`flex-1 p-3 text-sm font-medium ${tab === 'url' ? 'bg-blue-50 text-blue-600' : 'text-slate-500 hover:bg-slate-50'}`}>Paste URL</button>
+            <button onClick={() => setTab('upload')} className={`flex-1 p-3 text-sm font-medium ${tab === 'upload' ? 'bg-blue-50 text-blue-600' : 'text-slate-500 hover:bg-slate-50'}`}>Upload File</button>
+            <button onClick={onClose} className="p-3 text-slate-400 hover:text-red-500"><X size={18} /></button>
+          </div>
+          <div className="p-6">
+            {tab === 'url' ? (
+                <div className="space-y-4">
+                    <input 
+                        type="text" 
+                        value={url} 
+                        onChange={(e) => setUrl(e.target.value)} 
+                        placeholder="https://example.com/image.png" 
+                        className="w-full bg-slate-100 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                    <button onClick={() => { onUrlSubmit(url); onClose(); }} disabled={!url} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl disabled:opacity-50">Add Image</button>
+                </div>
+            ) : (
+                <div className="space-y-4 text-center">
+                    <div onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-slate-300 rounded-xl p-8 cursor-pointer hover:bg-slate-50 hover:border-blue-400 transition-colors">
+                        <Upload size={32} className="mx-auto text-slate-400 mb-2" />
+                        <p className="text-sm text-slate-500 font-medium">Click to browse files</p>
+                    </div>
+                    <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
+                </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+};
+
+const MusicPlayer = ({ isOpen, onClose, onPlay, currentMusicState }) => {
+  const [url, setUrl] = useState('');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="absolute top-20 left-6 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-40 animate-fade-in-down">
+      <div className="bg-slate-900 text-white p-3 flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          <Music size={16} />
+          <span className="font-medium text-sm">Vibe Station (Synced)</span>
+        </div>
+        <button onClick={onClose} className="hover:text-red-400">×</button>
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="flex gap-2">
+          <input 
+            type="text" 
+            placeholder="Paste YouTube Link" 
+            className="flex-1 bg-slate-100 border-none rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+          <button onClick={() => onPlay(url)} className="bg-blue-600 text-white px-3 rounded-lg hover:bg-blue-700">
+            <Check size={16} />
+          </button>
+        </div>
+        {currentMusicState?.url ? (
+            <div className="aspect-video w-full bg-slate-100 rounded-lg overflow-hidden">
+                <iframe
+                width="100%"
+                height="100%"
+                src={currentMusicState.url}
+                title="Music Player"
+                frameBorder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                ></iframe>
+            </div>
+        ) : (
+            <div className="h-32 bg-slate-50 flex items-center justify-center text-slate-400 text-xs">
+                No music playing
+            </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * LANDING PAGE
+ */
+function LandingPage({ onJoin, user }) {
+  const [inputCode, setInputCode] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+
+  const createRoom = async () => {
+    if (!user) return;
+    setIsCreating(true);
+    const newCode = generateRoomId();
+    try {
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
+      await setDoc(roomRef, {
+        elements: [],
+        music: { url: '', isPlaying: false },
+        activeUsers: 1,
+        createdAt: serverTimestamp()
+      });
+      onJoin(newCode);
+    } catch (e) {
+      alert("Could not create room.");
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="max-w-md w-full bg-white border border-slate-200 rounded-3xl shadow-xl p-8">
+        <div className="text-center mb-8">
+          <div className="h-16 w-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-blue-500/20">
+            <Share2 className="text-white w-8 h-8" />
+          </div>
+          <h1 className="text-3xl font-bold text-slate-800 mb-2">Collab Board</h1>
+          <p className="text-slate-500">Real-time drawing & music sync</p>
+        </div>
+        <div className="space-y-4">
+          <button
+            onClick={createRoom}
+            disabled={isCreating || !user}
+            className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2"
+          >
+            {isCreating ? 'Creating...' : <><Plus size={20} /> Create New Room</>}
+          </button>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={inputCode}
+              onChange={(e) => setInputCode(e.target.value.toUpperCase())}
+              placeholder="ENTER CODE"
+              maxLength={6}
+              className="flex-1 bg-slate-100 rounded-xl px-4 py-3 text-center font-mono font-bold tracking-widest outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              onClick={() => inputCode.length >= 4 && onJoin(inputCode)}
+              className="px-6 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold"
+            >
+              <LogIn size={20} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * MAIN APP
+ */
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [roomCode, setRoomCode] = useState(null);
+  const [isInRoom, setIsInRoom] = useState(false);
+
+  useEffect(() => {
+    const initAuth = async () => {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+            await signInAnonymously(auth);
+        }
+    };
+    initAuth();
+    return onAuthStateChanged(auth, setUser);
+  }, []);
+
+  if (!isInRoom || !roomCode) {
+    return <LandingPage onJoin={(code) => { setRoomCode(code); setIsInRoom(true); }} user={user} />;
+  }
+
+  return <CollaborativeWhiteboard roomCode={roomCode} user={user} onLeave={() => setIsInRoom(false)} />;
+}
+
+/**
+ * THE WHITEBOARD
+ */
+function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
+  // State
+  const [elements, setElements] = useState([]);
+  const [musicState, setMusicState] = useState({ url: '', isPlaying: false });
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [tool, setTool] = useState('pencil'); 
+  const [color, setColor] = useState('#000000');
+  const [action, setAction] = useState('none'); 
+  const [selectedElement, setSelectedElement] = useState(null);
+  
+  const [activeEmoji, setActiveEmoji] = useState('👍');
+  const [isImageModalOpen, setIsImageModalOpen] = useState(false);
+  const [isMusicOpen, setIsMusicOpen] = useState(false);
+  const [pendingImagePos, setPendingImagePos] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+
+  // Firestore Ref
+  const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+
+  // Initial Center
+  useEffect(() => {
+    setOffset({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  }, []);
+
+  // 1. SYNC: Listen to Firestore
+  useEffect(() => {
+    if (!user) return;
+    const unsubscribe = onSnapshot(roomRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.elements) {
+            if (action !== 'drawing' && action !== 'moving') {
+                setElements(sanitizeElements(data.elements));
+            }
+        }
+        if (data.music) setMusicState(data.music);
+        setIsConnected(true);
+      } else {
+        setDoc(roomRef, { elements: [], music: { url: '', isPlaying: false } });
+      }
+    });
+    return () => unsubscribe();
+  }, [roomCode, user, action]);
+
+  // 2. SAVE TO FIRESTORE
+  const saveToFirestore = async (newElements) => {
+      try {
+          await updateDoc(roomRef, { elements: newElements });
+      } catch (e) { console.error("Save error", e); }
+  };
+
+  const updateMusic = async (url) => {
+      const finalUrl = getEmbedUrl(url);
+      if (finalUrl) {
+        await updateDoc(roomRef, { music: { url: finalUrl, isPlaying: true } });
+      }
+  };
+
+  // --- Actions ---
+
+  const undo = () => {
+    if (elements.length > 0) {
+        const newEls = elements.slice(0, -1);
+        setElements(newEls);
+        saveToFirestore(newEls);
+    }
+  };
+
+  const clearCanvas = () => {
+    if (window.confirm('Clear board for everyone?')) {
+      setElements([]);
+      saveToFirestore([]);
+    }
+  };
+
+  const hardReset = () => {
+     window.location.reload();
+  };
+
+  const addImageElement = (src) => {
+      if (!src || !pendingImagePos) return;
+      const { x, y } = pendingImagePos;
+      const id = generateId();
+      const newEl = { id, type: 'image', x, y, width: 320, height: 200, src };
+      const newElements = [...elements, newEl];
+      setElements(newElements);
+      saveToFirestore(newElements);
+      setTool('select');
+      setPendingImagePos(null);
+  };
+
+  // --- Event Handlers ---
+
+  const handleMouseDown = (event) => {
+    if (tool === 'hand') {
+      setAction('panning');
+      return;
+    }
+
+    const { x, y } = getCoordinates(event, offset, scale);
+
+    if (tool === 'eraser') {
+      const clickedElement = elements.find(el => isHit(el, x, y));
+      if (clickedElement) {
+          const newEls = elements.filter(el => el.id !== clickedElement.id);
+          setElements(newEls);
+          saveToFirestore(newEls);
+      }
+      return;
+    }
+
+    if (tool === 'select') {
+       const clickedElement = [...elements].reverse().find(el => isHit(el, x, y));
+       if (clickedElement) {
+         setSelectedElement(clickedElement);
+         setAction('moving');
+       } else {
+         setSelectedElement(null);
+       }
+       return;
+    }
+
+    if (tool === 'image') {
+        setPendingImagePos({ x, y });
+        setIsImageModalOpen(true);
+        return;
+    }
+
+    if (tool === 'video') {
+       const url = prompt('Enter YouTube URL:');
+       if (url) {
+           const finalUrl = getEmbedUrl(url);
+           if (finalUrl) {
+                const id = generateId();
+                const newEl = { id, type: 'video', x, y, width: 320, height: 180, src: finalUrl };
+                const newEls = [...elements, newEl];
+                setElements(newEls);
+                saveToFirestore(newEls);
+                setTool('select');
+           } else {
+               alert('Invalid Video URL');
+           }
+       }
+       return;
+    }
+
+    if (tool === 'text') {
+        const id = generateId();
+        const newEl = { id, type: 'text', x, y, text: '', color, fontSize: 24, width: 200, height: 50 };
+        const newEls = [...elements, newEl];
+        setElements(newEls);
+        saveToFirestore(newEls); // Initial save
+        setSelectedElement(newEl);
+        setTool('select');
+        return;
+    }
+
+    if (tool === 'emoji') {
+        const id = generateId();
+        const newEl = { id, type: 'emoji', x, y, text: activeEmoji, fontSize: 64, width: 64, height: 64 };
+        const newEls = [...elements, newEl];
+        setElements(newEls);
+        saveToFirestore(newEls);
+        setTool('select');
+        return;
+    }
+
+    if (tool === 'pencil') {
+      const id = generateId();
+      const newEl = { id, type: 'pencil', points: [{ x, y }], color, strokeWidth: 3 };
+      setElements(prevState => [...prevState, newEl]);
+      setAction('drawing');
+      setSelectedElement(newEl);
+    }
+  };
+
+  const handleMouseMove = (event) => {
+    const { x, y } = getCoordinates(event, offset, scale);
+
+    if (action === 'panning') {
+      setOffset(prev => ({
+          x: prev.x + event.movementX,
+          y: prev.y + event.movementY
+      }));
+      return;
+    }
+
+    if (action === 'drawing') {
+      const index = elements.length - 1;
+      const elementsCopy = [...elements];
+      if (elementsCopy[index]) {
+          const currentPoints = elementsCopy[index].points || [];
+          elementsCopy[index].points = [...currentPoints, { x, y }];
+          setElements(elementsCopy);
+      }
+    }
+
+    if (action === 'moving' && selectedElement) {
+        const index = elements.findIndex(el => el.id === selectedElement.id);
+        if (index !== -1) {
+            const el = elements[index];
+            const elementsCopy = [...elements];
+            let w = el.width || 0;
+            let h = el.height || 0;
+            
+            elementsCopy[index] = { 
+                ...el, 
+                x: x - (w/2), 
+                y: y - (h/2) 
+            };
+            setElements(elementsCopy);
+        }
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (action === 'drawing' || action === 'moving') {
+        saveToFirestore(elements);
+    }
+    setAction('none');
+  };
+
+  const handleZoom = (delta) => {
+    setScale(prev => Math.min(Math.max(0.1, prev + delta), 5));
+  };
+
+  // --- Rendering ---
+  const renderElement = (el) => {
+    if (!el) return null;
+    const isSelected = selectedElement?.id === el.id;
+    
+    switch (el.type) {
+      case 'pencil':
+        if (!el.points || el.points.length < 2) return null; 
+        const validPoints = el.points.filter(p => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (validPoints.length < 2) return null;
+        const pathData = `M ${validPoints.map(p => `${p.x} ${p.y}`).join(' L ')}`;
+        return (
+          <path
+            key={el.id}
+            d={pathData}
+            stroke={el.color}
+            strokeWidth={el.strokeWidth || 3}
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={isSelected ? "drop-shadow-md opacity-80" : ""}
+          />
+        );
+      case 'text':
+        return (
+          <foreignObject key={el.id} x={el.x} y={el.y} width={(el.width || 100) + 50} height={(el.height || 50) + 50} className="overflow-visible">
+            <textarea
+              className={`bg-transparent outline-none resize-none overflow-hidden font-sans ${isSelected ? 'border border-dashed border-blue-400 bg-white/50' : 'border-none'}`}
+              style={{ 
+                  color: el.color, 
+                  fontSize: `${el.fontSize}px`, 
+                  lineHeight: 1.2,
+                  width: '100%',
+                  height: '100%'
+                }}
+              value={el.text || ''}
+              placeholder="Type..."
+              onChange={(e) => {
+                  const copy = [...elements];
+                  const idx = copy.findIndex(e => e.id === el.id);
+                  copy[idx].text = e.target.value;
+                  copy[idx].width = Math.max(200, e.target.scrollWidth);
+                  copy[idx].height = Math.max(50, e.target.scrollHeight);
+                  setElements(copy);
+              }}
+              onBlur={() => saveToFirestore(elements)} 
+            />
+          </foreignObject>
+        );
+      case 'emoji':
+          return (
+            <text 
+                key={el.id} 
+                x={el.x} 
+                y={el.y} 
+                fontSize={el.fontSize}
+                className="cursor-move select-none"
+                dy="0.8em"
+                style={{ opacity: isSelected ? 0.7 : 1 }}
+            >
+                {el.text}
+            </text>
+          );
+      case 'image':
+        return (
+          <image
+            key={el.id}
+            href={el.src}
+            x={el.x}
+            y={el.y}
+            width={el.width}
+            height={el.height}
+            className={`cursor-move ${isSelected ? 'outline outline-2 outline-blue-500' : ''}`}
+          />
+        );
+      case 'video':
+        return (
+            <foreignObject key={el.id} x={el.x} y={el.y} width={el.width} height={el.height}>
+                <div className={`w-full h-full bg-black rounded shadow-xl overflow-hidden group border-2 ${isSelected ? 'border-blue-500' : 'border-transparent'}`}>
+                    <div className="absolute top-0 right-0 bg-black text-white p-1 opacity-0 group-hover:opacity-100 cursor-move z-10 text-xs pointer-events-none">Drag here</div>
+                    <iframe
+                        width="100%"
+                        height="100%"
+                        src={el.src}
+                        frameBorder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                        className="pointer-events-auto" 
+                    />
+                    {tool === 'select' && action !== 'none' && (
+                        <div className="absolute inset-0 bg-transparent z-20"></div>
+                    )}
+                </div>
+            </foreignObject>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="w-screen h-screen overflow-hidden bg-slate-50 relative font-sans text-slate-900 select-none">
+      
+      {/* --- Emergency Reset Button --- */}
+      <div className="fixed top-2 right-2 flex gap-2 z-50">
+          <div className="bg-white/90 backdrop-blur px-3 py-1 rounded-full text-xs font-mono border border-slate-200 flex items-center gap-2 shadow-sm">
+             CODE: <span className="font-bold select-all">{roomCode}</span>
+             <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
+          </div>
+          <button 
+            onClick={hardReset}
+            title="Reload App"
+            className="p-2 bg-red-100 hover:bg-red-200 text-red-600 rounded-lg opacity-50 hover:opacity-100 transition-opacity"
+          >
+            <RefreshCw size={12} />
+          </button>
+      </div>
+
+      {/* --- Top Bar --- */}
+      <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start pointer-events-none z-30">
+        <div className="flex flex-col gap-4 pointer-events-auto">
+           <div className="flex gap-2">
+                <button onClick={onLeave} className="bg-white p-2 rounded-xl shadow-sm border border-slate-200 hover:bg-slate-50 text-red-500"><X size={18}/></button>
+                <button 
+                    onClick={() => setIsMusicOpen(!isMusicOpen)}
+                    className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow-sm border border-slate-200 hover:bg-slate-50 transition-colors"
+                >
+                    <Music size={18} className="text-purple-500" />
+                    <span className="font-semibold text-sm">Vibe Station</span>
+                </button>
+           </div>
+          
+          <MusicPlayer 
+            isOpen={isMusicOpen} 
+            onClose={() => setIsMusicOpen(false)} 
+            onPlay={updateMusic}
+            currentMusicState={musicState}
+          />
+        </div>
+
+        <div className="flex flex-col items-end gap-3 pointer-events-auto">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
+             <button onClick={() => handleZoom(0.1)} className="p-2 hover:bg-slate-50 border-b border-slate-100"><ZoomIn size={18} /></button>
+             <button onClick={() => setScale(1)} className="p-2 text-xs font-bold text-slate-500 hover:bg-slate-50">{Math.round(scale * 100)}%</button>
+             <button onClick={() => handleZoom(-0.1)} className="p-2 hover:bg-slate-50"><ZoomOut size={18} /></button>
+          </div>
+        </div>
+      </div>
+
+      <ImageModal 
+         isOpen={isImageModalOpen} 
+         onClose={() => setIsImageModalOpen(false)} 
+         onUrlSubmit={addImageElement}
+         onFileSubmit={addImageElement}
+      />
+
+      {/* --- Emoji Picker --- */}
+      {tool === 'emoji' && (
+          <div className="absolute bottom-24 left-1/2 transform -translate-x-1/2 bg-white p-2 rounded-xl shadow-xl border border-slate-200 flex gap-2 z-40 animate-fade-in-up">
+              {['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'].map(emoji => (
+                  <button 
+                    key={emoji}
+                    onClick={() => setActiveEmoji(emoji)}
+                    className={`p-2 rounded-lg text-2xl hover:bg-slate-100 transition-colors ${activeEmoji === emoji ? 'bg-blue-50 ring-2 ring-blue-400' : ''}`}
+                  >
+                      {emoji}
+                  </button>
+              ))}
+          </div>
+      )}
+
+      {/* --- Main Toolbar --- */}
+      <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-white p-2 rounded-2xl shadow-2xl shadow-slate-300/50 border border-slate-200 flex gap-2 items-center pointer-events-auto z-40 max-w-[95vw] overflow-x-auto">
+        <ToolButton icon={Hand} label="Pan (Hold Space)" active={tool === 'hand'} onClick={() => setTool('hand')} />
+        <ToolButton icon={Move} label="Select & Move" active={tool === 'select'} onClick={() => setTool('select')} />
+        <div className="w-px h-8 bg-slate-200 mx-1 shrink-0"></div>
+        <ToolButton icon={Pencil} label="Draw" active={tool === 'pencil'} onClick={() => setTool('pencil')} />
+        <ToolButton icon={Eraser} label="Eraser" active={tool === 'eraser'} onClick={() => setTool('eraser')} />
+        <div className="w-px h-8 bg-slate-200 mx-1 shrink-0"></div>
+        <ToolButton icon={Type} label="Text" active={tool === 'text'} onClick={() => setTool('text')} />
+        <ToolButton icon={ImageIcon} label="Image" active={tool === 'image'} onClick={() => setTool('image')} />
+        <ToolButton icon={Video} label="Video Embed" active={tool === 'video'} onClick={() => setTool('video')} />
+        <ToolButton icon={Smile} label="Reaction" active={tool === 'emoji'} onClick={() => setTool('emoji')} />
+        <div className="w-px h-8 bg-slate-200 mx-1 shrink-0"></div>
+        <ColorPicker color={color} onChange={setColor} />
+        <div className="w-px h-8 bg-slate-200 mx-1 shrink-0"></div>
+        <ToolButton icon={Undo} label="Undo (Delete Last)" onClick={undo} />
+        <ToolButton icon={Trash2} label="Clear All" onClick={clearCanvas} />
+      </div>
+
+      {/* --- Canvas (SVG) --- */}
+      <div 
+        className={`w-full h-full cursor-${tool === 'hand' || action === 'panning' ? 'grab' : tool === 'eraser' ? 'not-allowed' : tool === 'select' ? 'default' : 'crosshair'}`}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onTouchStart={(e) => handleMouseDown(e)}
+        onTouchMove={(e) => handleMouseMove(e)}
+        onTouchEnd={handleMouseUp}
+        onWheel={(e) => {
+            if (e.ctrlKey) {
+                e.preventDefault();
+                handleZoom(e.deltaY > 0 ? -0.1 : 0.1);
+            }
+        }}
+      >
+        <svg className="w-full h-full touch-none">
+          <defs>
+             <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+               <circle cx="1" cy="1" r="1" className="fill-slate-300" />
+             </pattern>
+          </defs>
+          
+          <g transform={`translate(${offset.x} ${offset.y}) scale(${scale})`}>
+              <rect x="-50000" y="-50000" width="100000" height="100000" fill="url(#grid)" />
+              {elements.map(renderElement)}
+          </g>
+        </svg>
+      </div>
+
+      <style>{`
+        @keyframes fade-in-up {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fade-in-down {
+          from { opacity: 0; transform: translateY(-20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in-up { animation: fade-in-up 0.4s ease-out; }
+        .animate-fade-in-down { animation: fade-in-down 0.4s ease-out; }
+      `}</style>
+    </div>
+  );
+}
