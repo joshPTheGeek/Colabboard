@@ -39,7 +39,7 @@
 <div id="root"></div>
 <div id="error-overlay"></div>
 
-<!-- GLOBAL ERROR HANDLER (Catches syntax errors in your config) -->
+<!-- GLOBAL ERROR HANDLER -->
 <script>
     window.onerror = function(message, source, lineno, colno, error) {
         const overlay = document.getElementById('error-overlay');
@@ -77,7 +77,6 @@ import {
  * ------------------------------------------------------------------
  * CONFIGURATION: PASTE YOUR KEYS HERE
  * ------------------------------------------------------------------
- * WARNING: Ensure you keep the quotes "" and the commas , at the end.
  */
 const fallbackConfig = {
   apiKey: "AIzaSyA-23TkBPSB2W9hw92KoP6iud2WabrA1uc",
@@ -88,8 +87,7 @@ const fallbackConfig = {
   appId: "1:811515955849:web:825d01be1df421b03e1458"
 };
 
-// This checks if we are in the Preview environment (where keys are injected)
-// OR if we are using the fallback config (for GitHub/Local).
+// Config Loading Logic
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : fallbackConfig;
@@ -98,7 +96,6 @@ const firebaseConfig = typeof __firebase_config !== 'undefined'
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-// Use a specific App ID for isolation if provided, otherwise default
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 /**
@@ -156,7 +153,13 @@ const isHit = (element, x, y, threshold = 10) => {
         width = element.fontSize;
         height = element.fontSize;
     }
-    return x >= element.x && x <= element.x + width && y >= element.y && y <= element.y + height;
+    
+    // Improved Hit Box for Images/Videos
+    const buffer = 5; // Easier to click
+    return x >= element.x - buffer && 
+           x <= element.x + width + buffer && 
+           y >= element.y - buffer && 
+           y <= element.y + height + buffer;
 };
 
 const sanitizeElements = (elements) => {
@@ -484,7 +487,8 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
     const { x, y } = getCoordinates(event, offset, scale);
 
     if (tool === 'eraser') {
-      const clickedElement = elements.find(el => isHit(el, x, y));
+      // FIX: Use reverse() to find the top-most visual element first
+      const clickedElement = [...elements].reverse().find(el => isHit(el, x, y));
       if (clickedElement) {
           const newEls = elements.filter(el => el.id !== clickedElement.id);
           setRedoStack([]);
@@ -559,7 +563,6 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
       setElements(prevState => [...prevState, newEl]);
       setAction('drawing');
       setSelectedElement(newEl);
-      // We don't clear redo stack here, we do it on mouse up to confirm drawing
     }
   };
 
@@ -654,7 +657,12 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
                 <div className={`w-full h-full bg-black rounded shadow-xl overflow-hidden group border-2 ${isSelected ? 'border-blue-500' : 'border-transparent'}`}>
                     <div className="absolute top-0 right-0 bg-black text-white p-1 opacity-0 group-hover:opacity-100 cursor-move z-10 text-xs pointer-events-none">Drag here</div>
                     <iframe width="100%" height="100%" src={el.src} frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="pointer-events-auto" />
-                    {tool === 'select' && action !== 'none' && <div className="absolute inset-0 bg-transparent z-20"></div>}
+                    
+                    {/* FIX: Overlay to capture clicks when erasing, or when selecting to allow drag start */}
+                    {(tool === 'eraser' || (tool === 'select' && action !== 'none')) && <div className="absolute inset-0 bg-transparent z-20"></div>}
+                    
+                    {/* Specific transparent layer for Eraser so we can click "delete" without hitting play */}
+                    {tool === 'eraser' && <div className="absolute inset-0 bg-red-500/10 z-30 pointer-events-auto cursor-crosshair"></div>}
                 </div>
             </foreignObject>
         );
