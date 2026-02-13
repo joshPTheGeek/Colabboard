@@ -1,52 +1,75 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaborative Room</title>
+    
+    <!-- 1. Import Map: Tells browser where to find React, Firebase, and Icons -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.344.0",
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js"
+      }
+    }
+    </script>
+
+    <!-- 2. Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 3. Babel Standalone for compiling JSX in browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f8fafc; }
+        .cursor-crosshair { cursor: crosshair; }
+        .cursor-grab { cursor: grab; }
+        .cursor-not-allowed { cursor: not-allowed; }
+        .cursor-move { cursor: move; }
+        /* Animation Classes */
+        @keyframes fade-in-up {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fade-in-down {
+          from { opacity: 0; transform: translateY(-20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in-up { animation: fade-in-up 0.4s ease-out; }
+        .animate-fade-in-down { animation: fade-in-down 0.4s ease-out; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<!-- 4. The Application Logic -->
+<script type="text/babel" data-type="module">
+import React, { useState, useEffect, useRef } from 'react';
+import { createRoot } from 'react-dom/client';
 import { 
-  Pencil, 
-  Type, 
-  Image as ImageIcon, 
-  Eraser, 
-  Hand, 
-  Undo, 
-  Redo, 
-  Music, 
-  ZoomIn, 
-  ZoomOut, 
-  Move, 
-  Trash2,
-  Smile,
-  Video,
-  Upload,
-  Link as LinkIcon,
-  X,
-  RefreshCw,
-  Share2,
-  Plus,
-  LogIn,
-  Check
+  Pencil, Type, Image as ImageIcon, Eraser, Hand, Undo, Redo, 
+  Music, ZoomIn, ZoomOut, Move, Trash2, Smile, Video, Upload, 
+  Link as LinkIcon, X, RefreshCw, Share2, Plus, LogIn, Check 
 } from 'lucide-react';
 import { initializeApp } from "firebase/app";
 import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  onSnapshot, 
-  updateDoc,
-  serverTimestamp
+  getFirestore, doc, setDoc, onSnapshot, updateDoc, serverTimestamp 
 } from "firebase/firestore";
 import { 
-  getAuth, 
-  signInAnonymously, 
-  onAuthStateChanged,
-  signInWithCustomToken
+  getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
 } from "firebase/auth";
 
 /**
- * ------------------------------------------------------------------
  * CONFIGURATION
- * ------------------------------------------------------------------
- * For Local/GitHub use: Replace the 'fallbackConfig' object below 
- * with your own Firebase project configuration keys.
+ * Replace the values below with your own Firebase keys from the Firebase Console.
  */
-const fallbackConfig = {
+const firebaseConfig = {
   apiKey: "YOUR_API_KEY",
   authDomain: "your-project.firebaseapp.com",
   projectId: "your-project-id",
@@ -55,22 +78,16 @@ const fallbackConfig = {
   appId: "1:00000000000:web:00000000000000"
 };
 
-const firebaseConfig = typeof __firebase_config !== 'undefined' 
-  ? JSON.parse(__firebase_config) 
-  : fallbackConfig;
-
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-
-// Use a specific App ID for isolation if provided, otherwise default
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const appId = "default-app-id"; // You can change this if hosting multiple apps
 
 /**
  * UTILITIES
  */
 const generateId = () => Math.random().toString(36).substr(2, 9);
-
 const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
 const getCoordinates = (event, offset, scale) => {
@@ -84,13 +101,11 @@ const getCoordinates = (event, offset, scale) => {
 
 const getEmbedUrl = (url) => {
     if (!url) return null;
-    // YouTube
     const ytRegExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
     const ytMatch = url.match(ytRegExp);
     if (ytMatch && ytMatch[2].length === 11) {
         return `https://www.youtube.com/embed/${ytMatch[2]}?autoplay=1&enablejsapi=1`;
     }
-    // Spotify
     if (url.includes('spotify.com')) {
         try {
             const urlObj = new URL(url);
@@ -103,7 +118,6 @@ const getEmbedUrl = (url) => {
     return null;
 };
 
-// Hit testing
 const isHit = (element, x, y, threshold = 10) => {
     if (!element) return false;
     if (element.type === 'pencil') {
@@ -147,7 +161,7 @@ const sanitizeElements = (elements) => {
 };
 
 /**
- * SUB-COMPONENTS
+ * COMPONENTS
  */
 const ToolButton = ({ icon: Icon, active, onClick, label }) => (
   <button
@@ -212,13 +226,7 @@ const ImageModal = ({ isOpen, onClose, onUrlSubmit, onFileSubmit }) => {
           <div className="p-6">
             {tab === 'url' ? (
                 <div className="space-y-4">
-                    <input 
-                        type="text" 
-                        value={url} 
-                        onChange={(e) => setUrl(e.target.value)} 
-                        placeholder="https://example.com/image.png" 
-                        className="w-full bg-slate-100 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
+                    <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/image.png" className="w-full bg-slate-100 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none" />
                     <button onClick={() => { onUrlSubmit(url); onClose(); }} disabled={!url} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl disabled:opacity-50">Add Image</button>
                 </div>
             ) : (
@@ -252,42 +260,23 @@ const MusicPlayer = ({ isOpen, onClose, onPlay, currentMusicState }) => {
       </div>
       <div className="p-4 space-y-3">
         <div className="flex gap-2">
-          <input 
-            type="text" 
-            placeholder="Paste YouTube Link" 
-            className="flex-1 bg-slate-100 border-none rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-          />
+          <input type="text" placeholder="Paste YouTube Link" className="flex-1 bg-slate-100 border-none rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={url} onChange={(e) => setUrl(e.target.value)} />
           <button onClick={() => onPlay(url)} className="bg-blue-600 text-white px-3 rounded-lg hover:bg-blue-700">
             <Check size={16} />
           </button>
         </div>
         {currentMusicState?.url ? (
             <div className="aspect-video w-full bg-slate-100 rounded-lg overflow-hidden">
-                <iframe
-                width="100%"
-                height="100%"
-                src={currentMusicState.url}
-                title="Music Player"
-                frameBorder="0"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                ></iframe>
+                <iframe width="100%" height="100%" src={currentMusicState.url} title="Music Player" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen></iframe>
             </div>
         ) : (
-            <div className="h-32 bg-slate-50 flex items-center justify-center text-slate-400 text-xs">
-                No music playing
-            </div>
+            <div className="h-32 bg-slate-50 flex items-center justify-center text-slate-400 text-xs">No music playing</div>
         )}
       </div>
     </div>
   );
 };
 
-/**
- * LANDING PAGE
- */
 function LandingPage({ onJoin, user }) {
   const [inputCode, setInputCode] = useState('');
   const [isCreating, setIsCreating] = useState(false);
@@ -306,7 +295,7 @@ function LandingPage({ onJoin, user }) {
       });
       onJoin(newCode);
     } catch (e) {
-      alert("Could not create room.");
+      alert("Could not create room: " + e.message);
     } finally {
       setIsCreating(false);
     }
@@ -323,26 +312,12 @@ function LandingPage({ onJoin, user }) {
           <p className="text-slate-500">Real-time drawing & music sync</p>
         </div>
         <div className="space-y-4">
-          <button
-            onClick={createRoom}
-            disabled={isCreating || !user}
-            className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2"
-          >
+          <button onClick={createRoom} disabled={isCreating || !user} className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2">
             {isCreating ? 'Creating...' : <><Plus size={20} /> Create New Room</>}
           </button>
           <div className="flex gap-2">
-            <input
-              type="text"
-              value={inputCode}
-              onChange={(e) => setInputCode(e.target.value.toUpperCase())}
-              placeholder="ENTER CODE"
-              maxLength={6}
-              className="flex-1 bg-slate-100 rounded-xl px-4 py-3 text-center font-mono font-bold tracking-widest outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button
-              onClick={() => inputCode.length >= 4 && onJoin(inputCode)}
-              className="px-6 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold"
-            >
+            <input type="text" value={inputCode} onChange={(e) => setInputCode(e.target.value.toUpperCase())} placeholder="ENTER CODE" maxLength={6} className="flex-1 bg-slate-100 rounded-xl px-4 py-3 text-center font-mono font-bold tracking-widest outline-none focus:ring-2 focus:ring-blue-500" />
+            <button onClick={() => inputCode.length >= 4 && onJoin(inputCode)} className="px-6 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold">
               <LogIn size={20} />
             </button>
           </div>
@@ -352,38 +327,7 @@ function LandingPage({ onJoin, user }) {
   );
 }
 
-/**
- * MAIN APP
- */
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [roomCode, setRoomCode] = useState(null);
-  const [isInRoom, setIsInRoom] = useState(false);
-
-  useEffect(() => {
-    const initAuth = async () => {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-            await signInAnonymously(auth);
-        }
-    };
-    initAuth();
-    return onAuthStateChanged(auth, setUser);
-  }, []);
-
-  if (!isInRoom || !roomCode) {
-    return <LandingPage onJoin={(code) => { setRoomCode(code); setIsInRoom(true); }} user={user} />;
-  }
-
-  return <CollaborativeWhiteboard roomCode={roomCode} user={user} onLeave={() => setIsInRoom(false)} />;
-}
-
-/**
- * THE WHITEBOARD
- */
 function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
-  // State
   const [elements, setElements] = useState([]);
   const [musicState, setMusicState] = useState({ url: '', isPlaying: false });
   const [scale, setScale] = useState(1);
@@ -399,15 +343,12 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
   const [pendingImagePos, setPendingImagePos] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
 
-  // Firestore Ref
   const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
 
-  // Initial Center
   useEffect(() => {
     setOffset({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
   }, []);
 
-  // 1. SYNC: Listen to Firestore
   useEffect(() => {
     if (!user) return;
     const unsubscribe = onSnapshot(roomRef, (docSnap) => {
@@ -427,7 +368,6 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
     return () => unsubscribe();
   }, [roomCode, user, action]);
 
-  // 2. SAVE TO FIRESTORE
   const saveToFirestore = async (newElements) => {
       try {
           await updateDoc(roomRef, { elements: newElements });
@@ -440,8 +380,6 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
         await updateDoc(roomRef, { music: { url: finalUrl, isPlaying: true } });
       }
   };
-
-  // --- Actions ---
 
   const undo = () => {
     if (elements.length > 0) {
@@ -458,9 +396,7 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
     }
   };
 
-  const hardReset = () => {
-     window.location.reload();
-  };
+  const hardReset = () => window.location.reload();
 
   const addImageElement = (src) => {
       if (!src || !pendingImagePos) return;
@@ -474,13 +410,8 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
       setPendingImagePos(null);
   };
 
-  // --- Event Handlers ---
-
   const handleMouseDown = (event) => {
-    if (tool === 'hand') {
-      setAction('panning');
-      return;
-    }
+    if (tool === 'hand') { setAction('panning'); return; }
 
     const { x, y } = getCoordinates(event, offset, scale);
 
@@ -534,7 +465,7 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
         const newEl = { id, type: 'text', x, y, text: '', color, fontSize: 24, width: 200, height: 50 };
         const newEls = [...elements, newEl];
         setElements(newEls);
-        saveToFirestore(newEls); // Initial save
+        saveToFirestore(newEls);
         setSelectedElement(newEl);
         setTool('select');
         return;
@@ -563,10 +494,7 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
     const { x, y } = getCoordinates(event, offset, scale);
 
     if (action === 'panning') {
-      setOffset(prev => ({
-          x: prev.x + event.movementX,
-          y: prev.y + event.movementY
-      }));
+      setOffset(prev => ({ x: prev.x + event.movementX, y: prev.y + event.movementY }));
       return;
     }
 
@@ -587,12 +515,7 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
             const elementsCopy = [...elements];
             let w = el.width || 0;
             let h = el.height || 0;
-            
-            elementsCopy[index] = { 
-                ...el, 
-                x: x - (w/2), 
-                y: y - (h/2) 
-            };
+            elementsCopy[index] = { ...el, x: x - (w/2), y: y - (h/2) };
             setElements(elementsCopy);
         }
     }
@@ -609,7 +532,6 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
     setScale(prev => Math.min(Math.max(0.1, prev + delta), 5));
   };
 
-  // --- Rendering ---
   const renderElement = (el) => {
     if (!el) return null;
     const isSelected = selectedElement?.id === el.id;
@@ -621,31 +543,15 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
         if (validPoints.length < 2) return null;
         const pathData = `M ${validPoints.map(p => `${p.x} ${p.y}`).join(' L ')}`;
         return (
-          <path
-            key={el.id}
-            d={pathData}
-            stroke={el.color}
-            strokeWidth={el.strokeWidth || 3}
-            fill="none"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={isSelected ? "drop-shadow-md opacity-80" : ""}
-          />
+          <path key={el.id} d={pathData} stroke={el.color} strokeWidth={el.strokeWidth || 3} fill="none" strokeLinecap="round" strokeLinejoin="round" className={isSelected ? "drop-shadow-md opacity-80" : ""} />
         );
       case 'text':
         return (
           <foreignObject key={el.id} x={el.x} y={el.y} width={(el.width || 100) + 50} height={(el.height || 50) + 50} className="overflow-visible">
             <textarea
               className={`bg-transparent outline-none resize-none overflow-hidden font-sans ${isSelected ? 'border border-dashed border-blue-400 bg-white/50' : 'border-none'}`}
-              style={{ 
-                  color: el.color, 
-                  fontSize: `${el.fontSize}px`, 
-                  lineHeight: 1.2,
-                  width: '100%',
-                  height: '100%'
-                }}
-              value={el.text || ''}
-              placeholder="Type..."
+              style={{ color: el.color, fontSize: `${el.fontSize}px`, lineHeight: 1.2, width: '100%', height: '100%' }}
+              value={el.text || ''} placeholder="Type..."
               onChange={(e) => {
                   const copy = [...elements];
                   const idx = copy.findIndex(e => e.id === el.id);
@@ -660,95 +566,49 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
         );
       case 'emoji':
           return (
-            <text 
-                key={el.id} 
-                x={el.x} 
-                y={el.y} 
-                fontSize={el.fontSize}
-                className="cursor-move select-none"
-                dy="0.8em"
-                style={{ opacity: isSelected ? 0.7 : 1 }}
-            >
-                {el.text}
-            </text>
+            <text key={el.id} x={el.x} y={el.y} fontSize={el.fontSize} className="cursor-move select-none" dy="0.8em" style={{ opacity: isSelected ? 0.7 : 1 }}>{el.text}</text>
           );
       case 'image':
         return (
-          <image
-            key={el.id}
-            href={el.src}
-            x={el.x}
-            y={el.y}
-            width={el.width}
-            height={el.height}
-            className={`cursor-move ${isSelected ? 'outline outline-2 outline-blue-500' : ''}`}
-          />
+          <image key={el.id} href={el.src} x={el.x} y={el.y} width={el.width} height={el.height} className={`cursor-move ${isSelected ? 'outline outline-2 outline-blue-500' : ''}`} />
         );
       case 'video':
         return (
             <foreignObject key={el.id} x={el.x} y={el.y} width={el.width} height={el.height}>
                 <div className={`w-full h-full bg-black rounded shadow-xl overflow-hidden group border-2 ${isSelected ? 'border-blue-500' : 'border-transparent'}`}>
                     <div className="absolute top-0 right-0 bg-black text-white p-1 opacity-0 group-hover:opacity-100 cursor-move z-10 text-xs pointer-events-none">Drag here</div>
-                    <iframe
-                        width="100%"
-                        height="100%"
-                        src={el.src}
-                        frameBorder="0"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                        allowFullScreen
-                        className="pointer-events-auto" 
-                    />
-                    {tool === 'select' && action !== 'none' && (
-                        <div className="absolute inset-0 bg-transparent z-20"></div>
-                    )}
+                    <iframe width="100%" height="100%" src={el.src} frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="pointer-events-auto" />
+                    {tool === 'select' && action !== 'none' && <div className="absolute inset-0 bg-transparent z-20"></div>}
                 </div>
             </foreignObject>
         );
-      default:
-        return null;
+      default: return null;
     }
   };
 
   return (
     <div className="w-screen h-screen overflow-hidden bg-slate-50 relative font-sans text-slate-900 select-none">
-      
-      {/* --- Emergency Reset Button --- */}
       <div className="fixed top-2 right-2 flex gap-2 z-50">
           <div className="bg-white/90 backdrop-blur px-3 py-1 rounded-full text-xs font-mono border border-slate-200 flex items-center gap-2 shadow-sm">
              CODE: <span className="font-bold select-all">{roomCode}</span>
              <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
           </div>
-          <button 
-            onClick={hardReset}
-            title="Reload App"
-            className="p-2 bg-red-100 hover:bg-red-200 text-red-600 rounded-lg opacity-50 hover:opacity-100 transition-opacity"
-          >
+          <button onClick={hardReset} title="Reload App" className="p-2 bg-red-100 hover:bg-red-200 text-red-600 rounded-lg opacity-50 hover:opacity-100 transition-opacity">
             <RefreshCw size={12} />
           </button>
       </div>
 
-      {/* --- Top Bar --- */}
       <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start pointer-events-none z-30">
         <div className="flex flex-col gap-4 pointer-events-auto">
            <div className="flex gap-2">
                 <button onClick={onLeave} className="bg-white p-2 rounded-xl shadow-sm border border-slate-200 hover:bg-slate-50 text-red-500"><X size={18}/></button>
-                <button 
-                    onClick={() => setIsMusicOpen(!isMusicOpen)}
-                    className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow-sm border border-slate-200 hover:bg-slate-50 transition-colors"
-                >
+                <button onClick={() => setIsMusicOpen(!isMusicOpen)} className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow-sm border border-slate-200 hover:bg-slate-50 transition-colors">
                     <Music size={18} className="text-purple-500" />
                     <span className="font-semibold text-sm">Vibe Station</span>
                 </button>
            </div>
-          
-          <MusicPlayer 
-            isOpen={isMusicOpen} 
-            onClose={() => setIsMusicOpen(false)} 
-            onPlay={updateMusic}
-            currentMusicState={musicState}
-          />
+          <MusicPlayer isOpen={isMusicOpen} onClose={() => setIsMusicOpen(false)} onPlay={updateMusic} currentMusicState={musicState} />
         </div>
-
         <div className="flex flex-col items-end gap-3 pointer-events-auto">
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
              <button onClick={() => handleZoom(0.1)} className="p-2 hover:bg-slate-50 border-b border-slate-100"><ZoomIn size={18} /></button>
@@ -758,29 +618,18 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
         </div>
       </div>
 
-      <ImageModal 
-         isOpen={isImageModalOpen} 
-         onClose={() => setIsImageModalOpen(false)} 
-         onUrlSubmit={addImageElement}
-         onFileSubmit={addImageElement}
-      />
+      <ImageModal isOpen={isImageModalOpen} onClose={() => setIsImageModalOpen(false)} onUrlSubmit={addImageElement} onFileSubmit={addImageElement} />
 
-      {/* --- Emoji Picker --- */}
       {tool === 'emoji' && (
           <div className="absolute bottom-24 left-1/2 transform -translate-x-1/2 bg-white p-2 rounded-xl shadow-xl border border-slate-200 flex gap-2 z-40 animate-fade-in-up">
               {['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'].map(emoji => (
-                  <button 
-                    key={emoji}
-                    onClick={() => setActiveEmoji(emoji)}
-                    className={`p-2 rounded-lg text-2xl hover:bg-slate-100 transition-colors ${activeEmoji === emoji ? 'bg-blue-50 ring-2 ring-blue-400' : ''}`}
-                  >
+                  <button key={emoji} onClick={() => setActiveEmoji(emoji)} className={`p-2 rounded-lg text-2xl hover:bg-slate-100 transition-colors ${activeEmoji === emoji ? 'bg-blue-50 ring-2 ring-blue-400' : ''}`}>
                       {emoji}
                   </button>
               ))}
           </div>
       )}
 
-      {/* --- Main Toolbar --- */}
       <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-white p-2 rounded-2xl shadow-2xl shadow-slate-300/50 border border-slate-200 flex gap-2 items-center pointer-events-auto z-40 max-w-[95vw] overflow-x-auto">
         <ToolButton icon={Hand} label="Pan (Hold Space)" active={tool === 'hand'} onClick={() => setTool('hand')} />
         <ToolButton icon={Move} label="Select & Move" active={tool === 'select'} onClick={() => setTool('select')} />
@@ -799,22 +648,15 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
         <ToolButton icon={Trash2} label="Clear All" onClick={clearCanvas} />
       </div>
 
-      {/* --- Canvas (SVG) --- */}
-      <div 
-        className={`w-full h-full cursor-${tool === 'hand' || action === 'panning' ? 'grab' : tool === 'eraser' ? 'not-allowed' : tool === 'select' ? 'default' : 'crosshair'}`}
+      <div className={`w-full h-full cursor-${tool === 'hand' || action === 'panning' ? 'grab' : tool === 'eraser' ? 'not-allowed' : tool === 'select' ? 'default' : 'crosshair'}`}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        onTouchStart={(e) => handleMouseDown(e)}
-        onTouchMove={(e) => handleMouseMove(e)}
+        onTouchStart={handleMouseDown}
+        onTouchMove={handleMouseMove}
         onTouchEnd={handleMouseUp}
-        onWheel={(e) => {
-            if (e.ctrlKey) {
-                e.preventDefault();
-                handleZoom(e.deltaY > 0 ? -0.1 : 0.1);
-            }
-        }}
+        onWheel={(e) => { if (e.ctrlKey) { e.preventDefault(); handleZoom(e.deltaY > 0 ? -0.1 : 0.1); } }}
       >
         <svg className="w-full h-full touch-none">
           <defs>
@@ -822,26 +664,37 @@ function CollaborativeWhiteboard({ roomCode, user, onLeave }) {
                <circle cx="1" cy="1" r="1" className="fill-slate-300" />
              </pattern>
           </defs>
-          
           <g transform={`translate(${offset.x} ${offset.y}) scale(${scale})`}>
               <rect x="-50000" y="-50000" width="100000" height="100000" fill="url(#grid)" />
               {elements.map(renderElement)}
           </g>
         </svg>
       </div>
-
-      <style>{`
-        @keyframes fade-in-up {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fade-in-down {
-          from { opacity: 0; transform: translateY(-20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fade-in-up { animation: fade-in-up 0.4s ease-out; }
-        .animate-fade-in-down { animation: fade-in-down 0.4s ease-out; }
-      `}</style>
     </div>
   );
 }
+
+function App() {
+  const [user, setUser] = useState(null);
+  const [roomCode, setRoomCode] = useState(null);
+  const [isInRoom, setIsInRoom] = useState(false);
+
+  useEffect(() => {
+    // Attempt anonymous sign-in immediately
+    signInAnonymously(auth).catch(console.error);
+    return onAuthStateChanged(auth, setUser);
+  }, []);
+
+  if (!isInRoom || !roomCode) {
+    return <LandingPage onJoin={(code) => { setRoomCode(code); setIsInRoom(true); }} user={user} />;
+  }
+
+  return <CollaborativeWhiteboard roomCode={roomCode} user={user} onLeave={() => setIsInRoom(false)} />;
+}
+
+// Render the application
+const root = createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
